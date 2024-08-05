@@ -25,6 +25,6 @@ def turn(degrees, direction, power):
 
 
 
-drive_straight(10,0.25)
+#drive_straight(10,0.25)
 
-#turn(90,1,0.25)
+turn(90,1,0.25)
