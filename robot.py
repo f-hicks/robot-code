@@ -1,120 +1,96 @@
 from sbot import Robot
-from sbot import BRAKE, COAST
-from sbot import AnalogPins
 from sbot import GPIOPinMode
-from enum import Enum
-
-def sleep(time):
-    robot.sleep(time)
+from sbot import AnalogPins
+import time
+import numpy
 
 robot = Robot()
+IO = robot.arduino
 
-USDirection = Enum("Ultrasound", "LEFT CENTRE RIGHT")
+fudge = 0.95
 
-def getUltraSound(side: USDirection):
-    if side == USDirection.CENTRE:
-        return robot.arduino.ultrasound_measure(2,3) ## change to the pins we actually use for the different sensors
-    elif side == USDirection.LEFT:
-        return robot.arduino.ultrasound_measure(4,5) ## change to the pins we actually use for the different sensors
-    elif side == USDirection.RIGHT:
-        return robot.arduino.ultrasound_measure(6,7) ## change to the pins we actually use for the different sensors
+LeftMotor = robot.motor_board.motors[0]
+RightMotor = robot.motor_board.motors[1]
 
-leftMotor = robot.motor_board.motors[0]
-rightMotor = robot.motor_board.motors[1]
+def frontUltrasound():
+    return IO.ultrasound_measure(2, 3)
 
-def driveStraight(time, power, after=COAST):
-    leftMotor.power = power
-    rightMotor.power = power
-    if time!=0:
-        sleep(time)
-        leftMotor.power = after
-        rightMotor.power = after
+def leftUltrasound():
+    return IO.ultrasound_measure(4, 5)
+
+def rightUltrasound():
+    return IO.ultrasound_measure(6, 7)
     
-def turn(degrees, direction, power, after=COAST):
-    if direction == 1:
-        leftMotor.power = -power
-        rightMotor.power = power
+def setMotors(left, right):
+    RightMotor.power = right*fudge
+    LeftMotor.power = left
+
+# This function checks visible maker list for a specific target
+def find_marker(markers, id_number):
+    for marker in markers:
+        if marker.id == id_number:
+            return marker
+    return None
+
+def turntowardsMarker(markerID, lastError, totalError):
+
+    setMotors(0,0)
+    robot.sleep(0.25)
+    markers = robot.camera.see()
+    targetMarker = find_marker(markers, markerID)
+    angleToMarker = -1
+
+    if targetMarker != None:
+        angleToMarker = targetMarker.position.horizontal_angle
     else:
-        leftMotor.power = power
-        rightMotor.power = -power
+        setMotors(0.3,-0.3)
+        robot.sleep(0.15)
+        turntowardsMarker(markerID, 0, 0)
     
-    sleep(degrees*0.0073)
-    leftMotor.power = after
-    rightMotor.power = after
-    
-def stop():
-    leftMotor.power = BRAKE
-    rightMotor.power = BRAKE
-    
-#TODO use a list to iteration through direction for each turn.    
-#TODO add support for multiple ultrasonic sensors
+    if(abs(angleToMarker) < 0.25 and angleToMarker != -1):
+        return None
+    elif (angleToMarker != -1):
+        pVal = angleToMarker * 0.05
+        iVal = totalError * 0.001
+        dVal = (angleToMarker - lastError) * 0.02
 
-sleep(1)
-#first corner
-while getUltraSound(USDirection.CENTRE) > 720:
-    print(getUltraSound(USDirection.CENTRE))
-    driveStraight(0, 0.1)
-stop()
-turn(90, 1, 0.1)
+        motorTime = pVal + iVal + dVal #PID!!!! (P seems to be the most useful)
+        setMotors(-0.25 * numpy.sign(angleToMarker), 0.25 * numpy.sign(angleToMarker))
+        robot.sleep(abs(motorTime))
 
-#second corner
-while getUltraSound(USDirection.CENTRE) > 720:
-    print(getUltraSound(USDirection.CENTRE))
-    driveStraight(0, 0.1)
-stop()
-turn(90, -1, 0.1)
+        turntowardsMarker(markerID, angleToMarker, totalError + abs(angleToMarker))
 
-#third corner
-while getUltraSound(USDirection.CENTRE) > 720:
-    print(getUltraSound(USDirection.CENTRE))
-    driveStraight(0, 0.1)
-stop()
-turn(90, 1, 0.1)
+def movetowardsMarker(markerID,forwardPower,forwardDistance,turnPower,turnTime):
 
-#diagonal bit
-driveStraight(0, 0.1)
+    #Note: turnTime and Power refer to turning the motors after it's detected the wall
+    # Basically whether the next turn is left/right and by how much (so turntowardsMarker doesn't have to do all the turning)
 
-#TODO make a function to make sure the robot is exactly straight so that it doesn't detect wrong distances.
+    #Order of operations (for this function):
+    # turn towards marker - markerID
+    # move forwards until close enough - forwardPower, forwardDistance
+    # turn - turnPower,turnTime
 
-def straighten():
-     #compare left and right sonars 
-    left = getUltraSound(USDirection.LEFT)
-    right = getUltraSound(USDirection.RIGHT)
-    print(left,right)
-    if right < 600 or left < 600: # a can is detected
-        print("Can")
-        return
-    before = leftMotor.power, rightMotor.power
-    if left > right:
-        turn(1, -1, 0.05, BRAKE)
-        
-    elif right > left:
-        turn(1, 1, 0.05, BRAKE)
-    leftMotor.power, rightMotor.power = before
-        
-    
-
-passed1 = False
-passed2 = False
-while True:
-    left = getUltraSound(USDirection.LEFT)
-    print(left)
-    if not passed2:
-        if left < 800 and not passed1:
-            #now into the middle bit
-            passed1 = True
-        elif passed1 and left > 800:
-            passed2 = True
-        #if passed1:
-            #straighten()
-    else:# wait for gettings past next block
-        if left < 4000 and left > 3000:
-            stop()
+    turntowardsMarker(markerID, 0, 0)
+    setMotors(forwardPower, forwardPower)
+    while True:
+        if(frontUltrasound() < forwardDistance):
             break
-
-turn(90, 1, 0.1, BRAKE)
-
-driveStraight(5,0.1, BRAKE)
-        
     
+    setMotors(-0.25,-0.25) #Brakes the robot
+    robot.sleep(0.1)
 
+    setMotors(turnPower, -turnPower)
+    robot.sleep(turnTime)
+
+#lap = 0
+#while True:
+#    print("Lap: " + str(lap))
+#    movetowardsMarker(1,0.3,500,-0.1,0.7)
+#    movetowardsMarker(3,0.3,500,0.1,0.7)
+#    movetowardsMarker(5,0.3,500,-0.1,0.7)
+#    movetowardsMarker(7,0.3,750,-0.1,0.7)
+#    lap += 0.5
+
+movetowardsMarker(3,0.5,500,0,0)
+
+movetowardsMarker(7,0.5,500,0,0)
