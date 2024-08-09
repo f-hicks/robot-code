@@ -1,6 +1,8 @@
 from sbot import Robot
 from sbot import GPIOPinMode
 from sbot import AnalogPins
+from sbot import COAST
+from sbot import BRAKE
 import time
 import numpy
 from typing import List
@@ -8,18 +10,17 @@ from typing import List
 robot = Robot()
 IO = robot.arduino
 
-#fudge = 0.96
+fudge = 0.96
 fudge = 1 # for simulator
 
-turnFactor = 0.4 #for simulator
 
 RightMotor = robot.motor_board.motors[0]
 LeftMotor = robot.motor_board.motors[1]
 
 # swap motors for sim
 
-RightMotor = robot.motor_board.motors[1]
-LeftMotor = robot.motor_board.motors[0]
+#RightMotor = robot.motor_board.motors[1]
+#LeftMotor = robot.motor_board.motors[0]
 
 def frontUltrasound() -> int:
     """
@@ -54,7 +55,7 @@ def turntowardsMarker(suitableMarkers: List[int]):
     while True:
 
         setMotors(0,0)
-        robot.sleep(0.4)
+        robot.sleep(0.45)
         markers = robot.camera.see()
         targetMarker = find_marker(markers, suitableMarkers)
 
@@ -64,18 +65,12 @@ def turntowardsMarker(suitableMarkers: List[int]):
             if(abs(angleToMarker) < 0.125):
 
                 #Turn back a tiny bit
-                pVal = angleToMarker * 0.5
+                pVal = angleToMarker * 0.3
                 iVal = totalError * 0.01
                 dVal = (angleToMarker - lastError) * 0.005
                 
-                # sim values
-                
-                pVal = angleToMarker * 0.5
-                iVal = totalError * 0.01
-                dVal = (angleToMarker - lastError) * 0.005
-
                 motorTime = pVal + iVal + dVal #PID!!!! (P seems to be the most useful)
-                #setMotors(0.25 * numpy.sign(angleToMarker)*turnFactor, -0.25 * numpy.sign(angleToMarker)*turnFactor)
+                #setMotors(0.25 * numpy.sign(angleToMarker), -0.25 * numpy.sign(angleToMarker))
                 robot.sleep(abs(motorTime))
                 
                 return targetMarker.id
@@ -94,23 +89,28 @@ def turntowardsMarker(suitableMarkers: List[int]):
                     pVal = pVal * 1.8
 
                 motorTime = pVal + iVal + dVal #PID!!!! (P seems to be the most useful)
-                setMotors(0.25 * numpy.sign(angleToMarker)*turnFactor, -0.25 * numpy.sign(angleToMarker)*turnFactor)
+                setMotors(0.25 * numpy.sign(angleToMarker), -0.25 * numpy.sign(angleToMarker))
                 robot.sleep(abs(motorTime))
                 
                 lastError = angleToMarker
                 totalError += angleToMarker
 
         else:
-            setMotors(-0.25*turnFactor,0.25*turnFactor)
-            robot.sleep(0.5)
-            if(numRotations <= 15):
-                #setMotors(-0.4,-0.4) # surely we don't want to move backwards until we have done a full rotation?
-                #robot.sleep(0.5)
+            setMotors(-0.2,0.2)
+            robot.sleep(0.4)
+
+            setMotors(0.1,0.1)
+            robot.sleep(0.05)
+
+            setMotors(COAST,COAST)
+            robot.sleep(0.1)
+
+            if(numRotations <= 12):
                 numRotations += 1
             else:
                 print("I AM LOST!!!")
-                setMotors(-0.5,-0.5)
-                robot.sleep(0.5)
+                setMotors(0.3,0.3)
+                robot.sleep(0.3)
                 return turntowardsMarker([0,1,2,3,4,5,6,7])
 
 
@@ -195,8 +195,6 @@ def movetowardsMarker(suitableMarkers: List[int], forwardPower: int, forwardDist
             motorPower = forwardPower
         setMotors(motorPower,motorPower)
         dis = frontUltrasound()
-        if dis == 4000:  ## fix it for simulation
-            dis = 0
         disArray[index] = max(dis,0)
         index += 1
         if(index >= 3):
@@ -226,25 +224,24 @@ def movetowardsMarker(suitableMarkers: List[int], forwardPower: int, forwardDist
 
     setMotors(0,0)
     robot.sleep(0.01)
-
     setMotors(turnPower, -turnPower)
-    robot.sleep(turnTime*turnFactor)
+    robot.sleep(turnTime)
 
     return t // 2
 
-c = [[[1,0,3,2],0.5,950,-0.25,0.75],
-    [[3,2,5,4],0.5,750,0.25,0.75],
-    [[5,4,7,6],0.5,1000,-0.25,0.75],
-    [[7,6,0,1],0.5,750,-0.25,0.75]
+c = [[[1,0],0.5,900,-0.2,0.5],
+    [[3,2],0.5,750,0.25,1],
+    [[5,4],0.5,750,-0.2,0.5],
+    [[7,6],0.5,250,-0.2,0.5]
 ]
 # 2D list of (ordererd list of markers), forward speed, distance from wall after turn, direction / speed to turn, time to turn.
 
 ## edited for sim:
-c = [[[1,0,3,2],0.5,950,-0.25,0.75],
-    [[3,2,5,4],0.5,750,0.25,0.75],
-    [[5,4,7,6],0.5,1000,-0.25,0.75],
-    [[7,6,0,1],0.5,1500,0,0] ## in sim when it gets to this corner, it sometimes gets confused and goes to the previous one 6,7?. mostly fixed by not automatically turning. still occasionally doing it though.
-] # in sim it got 5 laps in 2:30 minutes, 113 in 60 minutes -> average 4.7 per 2.5 minutes
+#c = [[[1,0,3,2],0.5,950,-0.25,0.75],
+#    [[3,2,5,4],0.5,750,0.25,0.75],
+#    [[5,4,7,6],0.5,1000,-0.25,0.75],
+#    [[7,6,0,1],0.5,1500,0,0] ## in sim when it gets to this corner, it sometimes gets confused and goes to the previous one 6,7?. mostly fixed by not automatically turning. still occasionally doing it though.
+#] # in sim it got 5 laps in 2:30 minutes, 113 in 60 minutes -> average 4.7 per 2.5 minutes
 
 def competition():
 
@@ -252,21 +249,16 @@ def competition():
     laps = 0
     while True:
         print(f"Corner {crntIndex + 1}")
-        """if crntIndex == 3:
-            setMotors(0.5,0.5)
-            robot.sleep(3)
-            setMotors(-0.23,0.23)
-            robot.sleep(0.75)
-            setMotors(0,0)  
-        else:"""
+
         crntIndex = movetowardsMarker(c[crntIndex][0],c[crntIndex][1],c[crntIndex][2],c[crntIndex][3],c[crntIndex][4])
-        #movetowardsMarker(*[x for x in c[crntIndex]])
+
         if crntIndex != 3:
             crntIndex += 1
         else:
             laps += 0.5
             print("Laps: ", laps)
             crntIndex = 0
+
 
 
 
@@ -279,15 +271,12 @@ def testing():
     #    robot.sleep(0.5)
 
 def forwardTest():
-    setMotors(0.5,0.5)
+
+    setMotors(0.65,0.65)
     robot.sleep(1)
-    setMotors(0,0)
+    setMotors(COAST,COAST)
+    robot.sleep(0.1)
+    setMotors(0.2,-0.2)
+    robot.sleep(0.5)
 
-
-#robot.sleep(1)
 competition()
-#forwardTest()
-#testing()
-robot.sleep(1)
-
-
